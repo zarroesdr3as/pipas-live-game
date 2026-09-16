@@ -2,403 +2,444 @@ const canvas = document.querySelector('#game');
 const ctx = canvas.getContext('2d');
 
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
+let W = innerWidth;
+let H = innerHeight;
 const keys = new Set();
-const kite = {
-  x: innerWidth * 0.58,
-  y: innerHeight * 0.34,
-  vx: 0,
-  vy: 0,
-  angle: -0.035,
+
+const state = {
   t: 0,
+  manualUntil: 0,
+  kite: {
+    x: W * 0.53,
+    y: H * 0.23,
+    vx: 0,
+    vy: 0,
+    angle: 0,
+    prevX: W * 0.53,
+    prevY: H * 0.23,
+  },
+  tail: [],
+  ghosts: [],
 };
 
+const TAIL_NODES = 78;
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function smoothstep(t) {
+  t = clamp(t, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 function resize() {
+  W = innerWidth;
+  H = innerHeight;
   dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.floor(innerWidth * dpr);
-  canvas.height = Math.floor(innerHeight * dpr);
-  canvas.style.width = `${innerWidth}px`;
-  canvas.style.height = `${innerHeight}px`;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  canvas.style.width = `${W}px`;
+  canvas.style.height = `${H}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  state.kite.x = clamp(state.kite.x, 35, W - 35);
+  state.kite.y = clamp(state.kite.y, 35, H * 0.64);
+  resetTail();
+}
+
+function resetTail() {
+  const k = state.kite;
+  const seg = tailSegmentLength();
+  state.tail = Array.from({ length: TAIL_NODES }, (_, i) => {
+    const x = k.x - Math.sin(k.angle) * i * seg * 0.05;
+    const y = k.y + 10 + i * seg;
+    return { x, y, px: x, py: y };
+  });
+}
+
+function tailSegmentLength() {
+  return clamp(H * 0.0064, 4.3, 7.5);
 }
 
 addEventListener('resize', resize);
-addEventListener('keydown', (e) => keys.add(e.key.toLowerCase()));
+addEventListener('keydown', (e) => {
+  const key = e.key.toLowerCase();
+  keys.add(key);
+  if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's'].includes(key)) {
+    state.manualUntil = state.t + 2.6;
+    e.preventDefault();
+  }
+});
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 resize();
 
-function drawSky(now) {
-  const g = ctx.createLinearGradient(0, 0, 0, innerHeight);
-  g.addColorStop(0, '#4c7eae');
-  g.addColorStop(0.5, '#6f9fca');
-  g.addColorStop(1, '#b8d2e4');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, innerWidth, innerHeight);
+function drawSky() {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#0651b4');
+  sky.addColorStop(0.46, '#0874dc');
+  sky.addColorStop(0.82, '#19a4ef');
+  sky.addColorStop(1, '#8bd5f2');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
 
-  const haze = ctx.createRadialGradient(
-    innerWidth * 0.78,
-    innerHeight * 0.13,
-    30,
-    innerWidth * 0.78,
-    innerHeight * 0.13,
-    innerWidth * 0.55,
-  );
-  haze.addColorStop(0, 'rgba(255,255,255,.18)');
-  haze.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = haze;
-  ctx.fillRect(0, 0, innerWidth, innerHeight);
-
-  ctx.globalAlpha = 0.055;
-  for (let i = 0; i < 38; i++) {
-    const x = (i * 127 + now * 0.0027) % (innerWidth + 220) - 110;
-    const y = 40 + ((i * 89) % Math.max(120, innerHeight - 80));
-    ctx.fillStyle = i % 3 === 0 ? '#ffffff' : '#0d3555';
-    ctx.fillRect(x, y, 1.1, 1.1);
-  }
-  ctx.globalAlpha = 1;
-}
-
-function kitePath(c) {
-  c.beginPath();
-  c.moveTo(-92, -66);
-  c.quadraticCurveTo(0, -78, 92, -66);
-  c.lineTo(76, 18);
-  c.quadraticCurveTo(45, 72, 0, 118);
-  c.quadraticCurveTo(-45, 72, -76, 18);
-  c.closePath();
-}
-
-function fillPoly(points, color, alpha = 1) {
   ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.035;
+  for (let i = 0; i < 75; i++) {
+    const x = (i * 97.13) % W;
+    const y = (i * 61.73) % H;
+    ctx.fillStyle = i % 3 ? '#ffffff' : '#002f85';
+    ctx.fillRect(x, y, 1.3, 1.3);
+  }
+  ctx.restore();
+
+  const horizonY = H * 0.93;
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = '#d3e5e9';
+  ctx.fillRect(0, horizonY, W, H - horizonY);
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle = '#5c7180';
+  for (let i = 0; i < 24; i++) {
+    const bw = 12 + ((i * 11) % 30);
+    const bh = 4 + ((i * 17) % 15);
+    const bx = (i * 83) % (W + 80) - 30;
+    ctx.fillRect(bx, horizonY - bh, bw, bh);
+  }
+  ctx.restore();
+}
+
+function referenceTarget(t) {
+  const p = ((t % 8.8) + 8.8) % 8.8;
+  let x;
+  let y;
+
+  if (p < 1.55) {
+    const u = smoothstep(p / 1.55);
+    x = lerp(0.56, 0.46, u) + Math.sin(u * Math.PI) * 0.015;
+    y = lerp(0.28, 0.205, u);
+  } else if (p < 3.15) {
+    const u = smoothstep((p - 1.55) / 1.6);
+    x = lerp(0.46, 0.57, u) + Math.sin(u * Math.PI) * 0.045;
+    y = 0.205 + Math.sin(u * Math.PI) * 0.085;
+  } else if (p < 4.75) {
+    const u = smoothstep((p - 3.15) / 1.6);
+    x = lerp(0.57, 0.47, u) - Math.sin(u * Math.PI) * 0.025;
+    y = lerp(0.29, 0.215, u) - Math.sin(u * Math.PI) * 0.02;
+  } else if (p < 6.1) {
+    const u = smoothstep((p - 4.75) / 1.35);
+    x = lerp(0.47, 0.54, u) + Math.sin(u * Math.PI * 1.2) * 0.018;
+    y = lerp(0.215, 0.105, u);
+  } else {
+    const u = smoothstep((p - 6.1) / 2.7);
+    x = 0.54 + Math.sin(p * 1.55) * 0.008 * (1 - u);
+    y = lerp(0.105, 0.16, u);
+  }
+
+  x += Math.sin(t * 1.37) * 0.006 + Math.sin(t * 3.81 + 0.7) * 0.003;
+  y += Math.sin(t * 1.91 + 1.6) * 0.004;
+  return { x: x * W, y: y * H };
+}
+
+function manualVector() {
+  let x = 0;
+  let y = 0;
+  if (keys.has('arrowleft') || keys.has('a')) x -= 1;
+  if (keys.has('arrowright') || keys.has('d')) x += 1;
+  if (keys.has('arrowup') || keys.has('w')) y -= 1;
+  if (keys.has('arrowdown') || keys.has('s')) y += 1;
+  const m = Math.hypot(x, y) || 1;
+  return { x: x / m, y: y / m, active: x !== 0 || y !== 0 };
+}
+
+function updateKite(dt) {
+  const k = state.kite;
+  k.prevX = k.x;
+  k.prevY = k.y;
+
+  const manual = manualVector();
+  const demo = state.t > state.manualUntil && !manual.active;
+  let ax = 0;
+  let ay = 0;
+
+  if (demo) {
+    const target = referenceTarget(state.t);
+    const dx = target.x - k.x;
+    const dy = target.y - k.y;
+    ax += dx * 5.4 - k.vx * 2.5;
+    ay += dy * 5.4 - k.vy * 2.5;
+  } else {
+    const accel = Math.min(W, H) * 2.1;
+    ax += manual.x * accel;
+    ay += manual.y * accel;
+    ax += (W * 0.52 - k.x) * 0.42;
+    ay += (H * 0.25 - k.y) * 0.28;
+    ax -= k.vx * 1.4;
+    ay -= k.vy * 1.4;
+  }
+
+  ax += Math.sin(state.t * 0.73) * 18 + Math.sin(state.t * 2.37 + 0.8) * 7;
+  ay += Math.sin(state.t * 1.11 + 2.1) * 7;
+
+  k.vx += ax * dt;
+  k.vy += ay * dt;
+
+  const maxSpeed = Math.min(W, H) * 0.52;
+  const speed = Math.hypot(k.vx, k.vy);
+  if (speed > maxSpeed) {
+    k.vx *= maxSpeed / speed;
+    k.vy *= maxSpeed / speed;
+  }
+
+  k.x += k.vx * dt;
+  k.y += k.vy * dt;
+
+  const margin = 26;
+  k.x = clamp(k.x, margin, W - margin);
+  k.y = clamp(k.y, margin, H * 0.66);
+
+  const targetAngle = Math.atan2(k.vy, k.vx) + Math.PI / 2;
+  let delta = targetAngle - k.angle;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+
+  const turnResponse = clamp(5.8 + speed * 0.014, 5.8, 13);
+  k.angle += delta * Math.min(1, turnResponse * dt);
+  k.angle += Math.sin(state.t * 7.2) * 0.0017;
+
+  state.ghosts.unshift({ x: k.x, y: k.y, angle: k.angle });
+  if (state.ghosts.length > 3) state.ghosts.length = 3;
+}
+
+function tailAnchor() {
+  const k = state.kite;
+  const size = kiteSize();
+  const localY = size * 0.72;
+  const c = Math.cos(k.angle);
+  const s = Math.sin(k.angle);
+  return {
+    x: k.x - localY * s,
+    y: k.y + localY * c,
+  };
+}
+
+function updateTail(dt) {
+  if (!state.tail.length) resetTail();
+  const tail = state.tail;
+  const anchor = tailAnchor();
+  const seg = tailSegmentLength();
+  const dt2 = dt * dt;
+  const k = state.kite;
+
+  tail[0].x = anchor.x;
+  tail[0].y = anchor.y;
+  tail[0].px = anchor.x;
+  tail[0].py = anchor.y;
+
+  for (let i = 1; i < tail.length; i++) {
+    const p = tail[i];
+    const vx = (p.x - p.px) * 0.987;
+    const vy = (p.y - p.py) * 0.987;
+    p.px = p.x;
+    p.py = p.y;
+
+    const depth = i / (tail.length - 1);
+    const gust =
+      Math.sin(state.t * 1.83 + i * 0.17) * (7 + depth * 14) +
+      Math.sin(state.t * 3.19 - i * 0.11) * 4;
+    const airLagX = -k.vx * (0.18 + depth * 0.12);
+    const airLagY = -k.vy * (0.06 + depth * 0.05);
+    const gravity = 78 + depth * 26;
+
+    p.x += vx + (gust + airLagX) * dt2;
+    p.y += vy + (gravity + airLagY) * dt2;
+  }
+
+  for (let iter = 0; iter < 9; iter++) {
+    tail[0].x = anchor.x;
+    tail[0].y = anchor.y;
+    for (let i = 1; i < tail.length; i++) {
+      const a = tail[i - 1];
+      const b = tail[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy) || 0.0001;
+      const error = (dist - seg) / dist;
+      if (i === 1) {
+        b.x -= dx * error;
+        b.y -= dy * error;
+      } else {
+        const correction = 0.5 * error;
+        a.x += dx * correction;
+        a.y += dy * correction;
+        b.x -= dx * correction;
+        b.y -= dy * correction;
+      }
+    }
+  }
+}
+
+function kiteSize() {
+  return clamp(Math.min(W, H) * 0.042, 18, 38);
+}
+
+function kitePath(size) {
+  const top = -size * 0.67;
+  const side = size * 0.54;
+  const shoulder = -size * 0.18;
+  const bottom = size * 0.69;
   ctx.beginPath();
-  ctx.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+  ctx.moveTo(0, top);
+  ctx.lineTo(side, shoulder);
+  ctx.lineTo(0, bottom);
+  ctx.lineTo(-side, shoulder);
   ctx.closePath();
-  ctx.fill();
-  ctx.restore();
 }
 
-function drawPatchwork() {
-  const red = '#b82831';
-  const darkRed = '#7d1f27';
-  const yellow = '#f0ec00';
-  const black = '#17191a';
-  const warmBlack = '#24201d';
-
-  ctx.fillStyle = red;
-  kitePath(ctx);
-  ctx.fill();
-
-  fillPoly([[-92, -66], [-24, -67], [-8, -25], [-76, -20]], warmBlack);
-  fillPoly([[24, -67], [92, -66], [76, -20], [8, -25]], darkRed);
-
-  fillPoly([[0, -67], [31, -26], [0, 8], [-31, -26]], yellow);
-  fillPoly([[0, -67], [31, -26], [0, -26]], '#fff300', 0.78);
-  fillPoly([[0, 8], [31, -26], [0, -26]], '#d5cf00', 0.7);
-  fillPoly([[0, -67], [-31, -26], [0, -26]], '#eee600', 0.82);
-
-  fillPoly([[-76, -20], [-31, -26], [-40, 19], [-72, 25]], yellow);
-  fillPoly([[31, -26], [76, -20], [72, 25], [40, 19]], '#c9c300');
-
-  fillPoly([[-31, -26], [0, 8], [-39, 18], [-40, 19]], black);
-  fillPoly([[31, -26], [40, 19], [39, 18], [0, 8]], black);
-  fillPoly([[-39, 18], [0, 8], [-23, 48], [-56, 30]], '#201c1a');
-  fillPoly([[0, 8], [39, 18], [56, 30], [23, 48]], '#201c1a');
-
-  fillPoly([[-76, 18], [-40, 19], [-56, 30], [-71, 50]], '#f4ef00');
-  fillPoly([[40, 19], [76, 18], [71, 50], [56, 30]], '#c8c100');
-  fillPoly([[-76, 18], [-71, 50], [-36, 61], [-56, 30]], '#d4ce00');
-  fillPoly([[76, 18], [56, 30], [36, 61], [71, 50]], '#b7b000');
-
-  fillPoly([[0, 8], [-39, 18], [-23, 48], [0, 35]], red);
-  fillPoly([[0, 8], [39, 18], [23, 48], [0, 35]], black);
-  fillPoly([[0, 35], [-23, 48], [-36, 61], [0, 70]], black);
-  fillPoly([[0, 35], [23, 48], [36, 61], [0, 70]], red);
-  fillPoly([[0, 70], [-36, 61], [-16, 92], [0, 118]], '#a1222a');
-  fillPoly([[0, 70], [36, 61], [16, 92], [0, 118]], '#d7cf00');
-
-  fillPoly([[-71, 50], [-36, 61], [-16, 92], [-37, 80]], '#f1ea00');
-  fillPoly([[71, 50], [37, 80], [16, 92], [36, 61]], '#d0c800');
-  fillPoly([[-36, 61], [0, 70], [-16, 92]], '#231f1d');
-  fillPoly([[36, 61], [16, 92], [0, 70]], '#211d1b');
-
-  fillPoly([[-92, -66], [92, -66], [89, -61], [-88, -60]], '#ffffff', 0.12);
-  fillPoly([[-75, 17], [75, 17], [73, 22], [-74, 23]], '#000000', 0.12);
-}
-
-function drawPaperTexture(t) {
+function drawKiteBody(x, y, angle, alpha = 1) {
+  const size = kiteSize();
   ctx.save();
-  kitePath(ctx);
-  ctx.clip();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.globalAlpha = alpha;
 
-  const gleam = ctx.createLinearGradient(-95, -70, 80, 105);
-  gleam.addColorStop(0, 'rgba(255,255,255,.20)');
-  gleam.addColorStop(0.24, 'rgba(255,255,255,.02)');
-  gleam.addColorStop(0.62, 'rgba(0,0,0,.10)');
-  gleam.addColorStop(1, 'rgba(255,255,255,.08)');
-  ctx.fillStyle = gleam;
-  ctx.fillRect(-110, -90, 220, 230);
-
-  const folds = [
-    [-72, -48, -28, -12, 18, 55],
-    [67, -46, 35, -8, -8, 72],
-    [-54, 13, -9, 30, 27, 91],
-    [52, 17, 11, 38, -18, 101],
-    [-8, -56, 3, -3, -2, 105],
-  ];
-
-  folds.forEach((f, index) => {
-    ctx.strokeStyle = index % 2 ? 'rgba(255,255,255,.12)' : 'rgba(0,0,0,.10)';
-    ctx.lineWidth = index === 4 ? 1.25 : 0.8;
-    ctx.beginPath();
-    ctx.moveTo(f[0], f[1]);
-    ctx.quadraticCurveTo(f[2], f[3], f[4], f[5]);
-    ctx.stroke();
-  });
-
-  for (let i = 0; i < 150; i++) {
-    const x = ((i * 47.17) % 190) - 95;
-    const y = ((i * 83.71) % 190) - 72;
-    const a = 0.025 + ((i * 13) % 17) / 900;
-    ctx.fillStyle = i % 4 === 0 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`;
-    ctx.fillRect(x, y, 0.75 + (i % 3) * 0.35, 0.75);
+  if (alpha === 1) {
+    ctx.shadowColor = 'rgba(238,255,205,.28)';
+    ctx.shadowBlur = size * 0.22;
   }
 
-  const lightX = Math.sin(t * 0.6) * 20;
-  const reflection = ctx.createRadialGradient(lightX - 28, -25, 2, lightX - 28, -25, 85);
-  reflection.addColorStop(0, 'rgba(255,255,255,.08)');
-  reflection.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = reflection;
-  ctx.fillRect(-110, -90, 220, 230);
-
-  ctx.restore();
-}
-
-function drawFrame() {
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = 'rgba(76,52,28,.72)';
-  ctx.lineWidth = 3.4;
-  ctx.beginPath();
-  ctx.moveTo(0, -95);
-  ctx.lineTo(0, 115);
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(218,190,132,.78)';
-  ctx.lineWidth = 1.15;
-  ctx.beginPath();
-  ctx.moveTo(-0.75, -94);
-  ctx.lineTo(-0.75, 114);
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(76,52,28,.74)';
-  ctx.lineWidth = 3.2;
-  ctx.beginPath();
-  ctx.moveTo(-88, -65);
-  ctx.quadraticCurveTo(0, -77, 88, -65);
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(221,193,139,.72)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(-86, -66);
-  ctx.quadraticCurveTo(0, -75.5, 86, -66);
-  ctx.stroke();
-}
-
-function drawBridle() {
-  ctx.save();
-  ctx.strokeStyle = 'rgba(239,241,235,.88)';
-  ctx.lineWidth = 1.15;
-  ctx.shadowColor = 'rgba(0,0,0,.18)';
-  ctx.shadowBlur = 1.5;
-
-  ctx.beginPath();
-  ctx.moveTo(-87, -64);
-  ctx.quadraticCurveTo(-47, -105, -5, -105);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(87, -64);
-  ctx.quadraticCurveTo(47, -105, 5, -105);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(-5, -105);
-  ctx.quadraticCurveTo(0, -112, 5, -105);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawKiteBody(t) {
-  ctx.save();
-  ctx.shadowColor = 'rgba(6,19,28,.34)';
-  ctx.shadowBlur = 15;
-  ctx.shadowOffsetX = 6;
-  ctx.shadowOffsetY = 11;
-  drawPatchwork();
+  kitePath(size);
+  const paper = ctx.createLinearGradient(-size * 0.4, -size * 0.55, size * 0.35, size * 0.55);
+  paper.addColorStop(0, '#168f4c');
+  paper.addColorStop(0.46, '#57b940');
+  paper.addColorStop(1, '#0a663c');
+  ctx.fillStyle = paper;
+  ctx.fill();
   ctx.shadowColor = 'transparent';
 
-  drawPaperTexture(t);
+  ctx.fillStyle = 'rgba(227,239,45,.95)';
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.49);
+  ctx.lineTo(size * 0.34, -size * 0.16);
+  ctx.lineTo(0, size * 0.49);
+  ctx.lineTo(-size * 0.34, -size * 0.16);
+  ctx.closePath();
+  ctx.fill();
 
-  ctx.strokeStyle = 'rgba(49,35,27,.74)';
-  ctx.lineWidth = 1.8;
-  kitePath(ctx);
+  ctx.fillStyle = 'rgba(17,86,46,.48)';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.52, -size * 0.18);
+  ctx.lineTo(0, -size * 0.05);
+  ctx.lineTo(-size * 0.06, size * 0.66);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(22,45,27,.70)';
+  ctx.lineWidth = Math.max(0.85, size * 0.045);
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.63);
+  ctx.lineTo(0, size * 0.65);
+  ctx.moveTo(-size * 0.48, -size * 0.17);
+  ctx.quadraticCurveTo(0, -size * 0.33, size * 0.48, -size * 0.17);
   ctx.stroke();
 
-  ctx.strokeStyle = 'rgba(255,255,255,.22)';
+  ctx.strokeStyle = 'rgba(235,255,204,.45)';
   ctx.lineWidth = 0.7;
-  ctx.translate(-0.6, -0.7);
-  kitePath(ctx);
+  kitePath(size);
   ctx.stroke();
-  ctx.translate(0.6, 0.7);
-
-  drawFrame();
-  drawBridle();
   ctx.restore();
 }
 
-function tailPoint(index, strand, t) {
-  const y = 110 + index * 11.8;
-  const spread = 4 + index * 1.1;
-  const phase = strand * 1.77 + index * 0.39;
-  const wind = Math.sin(t * (1.7 + strand * 0.025) + phase);
-  const curl = Math.sin(t * 2.2 + index * 0.76 + strand) * 0.55;
-  const x = (strand - 4) * 2.3 + wind * spread + curl * index * 0.5;
-  return [x, y];
-}
+function drawTail() {
+  const tail = state.tail;
+  if (tail.length < 2) return;
 
-function drawMessyTail(t) {
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(245,247,229,.54)';
+  ctx.lineWidth = clamp(Math.min(W, H) * 0.00215, 1.0, 2.15);
+  ctx.shadowColor = 'rgba(230,245,255,.18)';
+  ctx.shadowBlur = 2;
+  ctx.beginPath();
+  ctx.moveTo(tail[0].x, tail[0].y);
+  for (let i = 1; i < tail.length; i++) {
+    const p0 = tail[i - 1];
+    const p1 = tail[i];
+    const mx = (p0.x + p1.x) * 0.5;
+    const my = (p0.y + p1.y) * 0.5;
+    ctx.quadraticCurveTo(p0.x, p0.y, mx, my);
+  }
+  ctx.lineTo(tail[tail.length - 1].x, tail[tail.length - 1].y);
+  ctx.stroke();
 
-  for (let s = 0; s < 9; s++) {
-    const count = 10 + (s % 4) * 2;
-    const hue = s % 3 === 0 ? '#851523' : s % 2 ? '#bb2634' : '#cf3640';
-    ctx.strokeStyle = hue;
-    ctx.globalAlpha = 0.72 + (s % 3) * 0.08;
-    ctx.lineWidth = 1.35 + (s % 3) * 0.45;
+  for (let i = 5; i < tail.length - 1; i += 3) {
+    const p = tail[i];
+    const q = tail[i + 1];
+    const angle = Math.atan2(q.y - p.y, q.x - p.x);
+    const depth = i / tail.length;
+    const length = clamp(5 + depth * 5, 5, 10);
+    const width = clamp(1.8 + depth * 1.2, 1.8, 3.2);
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(angle + Math.sin(state.t * 6.3 + i * 0.77) * 0.48);
+    ctx.globalAlpha = 0.36 + (i % 4) * 0.09;
+    ctx.fillStyle = i % 2 ? '#f7f5e8' : '#e9edf0';
     ctx.beginPath();
-
-    for (let i = 0; i < count; i++) {
-      const [x, y] = tailPoint(i, s, t);
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        const [px, py] = tailPoint(i - 1, s, t);
-        const bend = Math.sin(t * 2.8 + s * 0.9 + i) * 8;
-        ctx.quadraticCurveTo((px + x) / 2 + bend, (py + y) / 2, x, y);
-      }
-    }
-    ctx.stroke();
-
-    for (let i = 3; i < count; i += 4) {
-      const [x, y] = tailPoint(i, s, t);
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(Math.sin(t * 3.1 + s + i) * 1.2);
-      ctx.fillStyle = s % 2 ? 'rgba(218,45,59,.78)' : 'rgba(139,21,35,.8)';
-      ctx.beginPath();
-      ctx.moveTo(-6, -1.4);
-      ctx.lineTo(7 + (i % 3) * 2, -0.6);
-      ctx.lineTo(5, 1.8);
-      ctx.lineTo(-5, 1.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
+    ctx.moveTo(-length * 0.45, -width);
+    ctx.quadraticCurveTo(0, -width * 1.4, length * 0.55, 0);
+    ctx.quadraticCurveTo(0, width * 1.4, -length * 0.45, width);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
-  for (let s = 0; s < 3; s++) {
-    ctx.strokeStyle = s === 1 ? 'rgba(106,17,30,.84)' : 'rgba(190,36,48,.82)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo((s - 1) * 8, 114);
-    ctx.bezierCurveTo(
-      -15 + s * 26 + Math.sin(t * 1.9 + s) * 30,
-      160,
-      38 - s * 26 + Math.sin(t * 1.35 + s) * 42,
-      222,
-      (s - 1) * 28 + Math.sin(t + s) * 44,
-      272 + s * 10,
-    );
-    ctx.stroke();
-  }
-
-  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
-function drawFlyingString(worldX, worldY, t) {
-  const endX = innerWidth * 0.47;
-  const endY = innerHeight + 60;
+function drawFlyingLine() {
+  const k = state.kite;
+  const endX = W * 0.44;
+  const endY = H * 1.08;
   ctx.save();
-  ctx.strokeStyle = 'rgba(245,245,238,.78)';
-  ctx.lineWidth = 0.9;
-  ctx.shadowColor = 'rgba(0,0,0,.18)';
-  ctx.shadowBlur = 1;
+  ctx.strokeStyle = 'rgba(234,242,239,.20)';
+  ctx.lineWidth = 0.7;
   ctx.beginPath();
-  ctx.moveTo(worldX, worldY);
-  ctx.bezierCurveTo(
-    worldX - 48 + Math.sin(t * 0.8) * 12,
-    worldY + 145,
-    endX + 85,
-    endY - 185,
-    endX,
-    endY,
-  );
+  ctx.moveTo(k.x, k.y + kiteSize() * 0.08);
+  ctx.bezierCurveTo(k.x - 12, k.y + H * 0.18, endX + 45, H * 0.79, endX, endY);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawKite() {
-  const bob = Math.sin(kite.t * 1.7) * 2.6;
-  const flutter = Math.sin(kite.t * 4.6) * 0.008;
+function drawScene() {
+  drawSky();
+  drawFlyingLine();
+  drawTail();
 
-  ctx.save();
-  ctx.translate(kite.x, kite.y + bob);
-  ctx.rotate(kite.angle + flutter);
-  ctx.scale(1.04, 1.04);
-  drawKiteBody(kite.t);
-  drawMessyTail(kite.t);
-  ctx.restore();
-
-  drawFlyingString(kite.x, kite.y + 15, kite.t);
+  for (let i = state.ghosts.length - 1; i >= 1; i--) {
+    const g = state.ghosts[i];
+    drawKiteBody(g.x, g.y, g.angle, 0.05 + i * 0.025);
+  }
+  drawKiteBody(state.kite.x, state.kite.y, state.kite.angle, 1);
 }
 
 function update(dt) {
-  const accel = 600;
-  if (keys.has('arrowleft') || keys.has('a')) kite.vx -= accel * dt;
-  if (keys.has('arrowright') || keys.has('d')) kite.vx += accel * dt;
-  if (keys.has('arrowup') || keys.has('w')) kite.vy -= accel * dt;
-  if (keys.has('arrowdown') || keys.has('s')) kite.vy += accel * dt;
-
-  const wind = Math.sin(kite.t * 0.74) * 13 + Math.sin(kite.t * 1.9) * 4;
-  kite.vx += wind * dt;
-  kite.vy += Math.sin(kite.t * 1.55) * 5 * dt;
-
-  const damping = Math.pow(0.085, dt);
-  kite.vx *= damping;
-  kite.vy *= damping;
-
-  kite.x += kite.vx * dt;
-  kite.y += kite.vy * dt;
-  kite.angle += ((kite.vx * 0.0014) - kite.angle) * Math.min(1, dt * 4.2);
-
-  const margin = 145;
-  kite.x = Math.max(margin, Math.min(innerWidth - margin, kite.x));
-  kite.y = Math.max(margin, Math.min(innerHeight * 0.62, kite.y));
-  kite.t += dt;
+  state.t += dt;
+  updateKite(dt);
+  updateTail(dt);
 }
 
 let last = performance.now();
 function loop(now) {
-  const dt = Math.min((now - last) / 1000, 0.033);
+  const dt = Math.min((now - last) / 1000, 1 / 30);
   last = now;
   update(dt);
-  drawSky(now);
-  drawKite();
+  drawScene();
   requestAnimationFrame(loop);
 }
+
 requestAnimationFrame(loop);
